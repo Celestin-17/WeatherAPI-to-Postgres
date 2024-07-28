@@ -1,15 +1,14 @@
-import pandas
-import requests
-import pandas as pd
-import datetime as dt
-import psycopg2
 from twilio.rest import Client
 from credentials import *
+import datetime as dt
+import requests
+import psycopg2
+import pandas
 import smtplib
 
-forecast = {}
 fetched_data = None
 rainAlert = False
+forecast = {}
 city = ""
 avg_temp = 0
 avg_h = 0
@@ -24,7 +23,8 @@ t_month = time.month
 t_year = time.year
 t_month = str(t_month).zfill(2)
 t_day = str(t_day).zfill(2)
-fdate = f"{t_year}-{str(t_month).zfill(2)}-{str(t_day).zfill(2)} {str(t_hour).zfill(2)}"
+t_hour = str(t_hour).zfill(2)
+fdate = f"{t_year}-{t_month}-{t_day} {t_hour}"
 
 def city_check(city: str):
     global lat, long
@@ -32,32 +32,39 @@ def city_check(city: str):
         "q": city,
         "appid": APPID
     }
-    with requests.get(url=geocoder_endpoint, params=geocoder_params) as response:
-        response.raise_for_status()
-        data = response.json()
-        lat = round(data[0]["lat"], 2)
-        long = round(data[0]["lon"], 2)
-    city_params = {
-        "lat": lat,
-        "lon": long,
-        "cnt": "4",
-        "appid": APPID
-    }
-    with requests.get(url=weatherAPI_endpoint, params=city_params) as response:
-        response.raise_for_status()
-        data = response.json()
-        city_weather = []
-        for element in data["list"]:
-            status = {
-                "Interval": element["dt_txt"][5:],
-                "Sky": element["weather"][0]["main"],
-                "Windspeed": str(element["wind"]["speed"]) + " Km/h",
-                "Humidity": str(element["main"]["humidity"]) + " %",
-                "Temperature": str(round(element["main"]["temp"] - 273.15, 1)) + " °C"
-            }
-            city_weather.append(status)
-        df = pandas.DataFrame(city_weather)
-        print(df)
+    try:
+        with requests.get(url=geocoder_endpoint, params=geocoder_params) as response:
+            response.raise_for_status()
+            data = response.json()
+            lat = round(data[0]["lat"], 2)
+            long = round(data[0]["lon"], 2)
+            if (lat == 0 and long == 0):
+                print(f"We can't find the coordinates for {city} !")
+            else:
+                city_params = {
+                    "lat": lat,
+                    "lon": long,
+                    "cnt": "4",
+                    "appid": APPID
+                }
+                with requests.get(url=weatherAPI_endpoint, params=city_params) as response:
+                    response.raise_for_status()
+                    data = response.json()
+                    city_weather = []
+                    for element in data["list"]:
+                        status = {
+                            "Interval": element["dt_txt"][5:],
+                            "Sky": element["weather"][0]["main"],
+                            "Windspeed": str(element["wind"]["speed"]) + " Km/h",
+                            "Humidity": str(element["main"]["humidity"]) + " %",
+                            "Temperature": str(round(element["main"]["temp"] - 273.15, 1)) + " °C"
+                        }
+                        city_weather.append(status)
+                    df = pandas.DataFrame(city_weather)
+                    print(f"\nThere is the forecast for the city: {city.capitalize()}\n")
+                    print(df)
+    except Exception as e:
+        print(f"\nWe can't find the forecast for the city: {city}\n")
 
 def rain_alert():
     global target_number, base_number
@@ -120,16 +127,17 @@ def main():
         with psycopg2.connect(**connection_params) as conn:
             with conn.cursor() as cursor:
                 query = (f"""SELECT * FROM weatherTable WHERE date >= '{fdate}' ORDER BY date; """)
+                print(fdate)
                 cursor.execute(query)
                 data = cursor.fetchall()
-                fetched_data = pd.DataFrame(data)
+                fetched_data = pandas.DataFrame(data)
                 fetched_data = fetched_data.drop(columns=0, axis=1)
     except Exception as e:
         print(e)
     end = False
     while not end:
         choice = input("MENU: \nType '1' to see the forecast for Bucharest\nType '2' to see the forecast for any city\n"
-        "Type '3' to check the last database entries\nType 'exit' to terminate the program\n")
+        "Type '3' to check the database entries\nType 'exit' to terminate the program\n")
         if choice == "1":
             interval = [row[1] for index, row in fetched_data.iterrows()]
             temp_interval = [row[6] for index, row in fetched_data.iterrows()]
@@ -156,7 +164,7 @@ def main():
                 weather_status = fetched_data[3].loc[fetched_data.index[0]]
                 print(f"Weather code: {weather_code} --- {weather_status}")
                 print(f"Average temperature in the forecasted period is: {round(avg_temp, 1)}°C ")
-                print(f"Average windspeed: {round(avg_w, 1)} km/h | Humidity: {avg_h}%")
+                print(f"Average windspeed: {round(avg_w, 1)} km/h | Humidity: {round(avg_h, 2)}%")
                 if rainAlert:
                     print(f"It's forecasted to rain !")
                 choice = input("Do you want to restart the program? Type 'yes' or 'no'\n").lower()
@@ -192,5 +200,6 @@ def main():
             print("Terminating the program...")
             end = True
 
-update()
-main()
+if __name__ == "__main__":
+    update()
+    main()
