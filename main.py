@@ -27,7 +27,8 @@ t_hour = str(t_hour).zfill(2)
 fdate = f"{t_year}-{t_month}-{t_day} {t_hour}"
 
 def city_check(city: str):
-    global lat, long
+    global lat, long, rainAlert
+    rainAlert = False
     geocoder_params = {
         "q": city,
         "appid": APPID
@@ -50,6 +51,7 @@ def city_check(city: str):
                 with requests.get(url=weatherAPI_endpoint, params=city_params) as response:
                     response.raise_for_status()
                     data = response.json()
+                    rain_interval = []
                     city_weather = []
                     for element in data["list"]:
                         status = {
@@ -60,20 +62,50 @@ def city_check(city: str):
                             "Temperature": str(round(element["main"]["temp"] - 273.15, 1)) + " °C"
                         }
                         city_weather.append(status)
+                        if element["weather"][0]["main"] == "Rain":
+                            interval = element["dt_txt"][5:]
+                            rain_interval.append(interval)
+                            rainAlert = True
                     df = pandas.DataFrame(city_weather)
                     print(f"\nThere is the forecast for the city: {city.capitalize()}\n")
                     print(df)
+                    if rainAlert:
+                        print(f"\nRain alert: It's forecasted to rain!")
+                        rain_interval_dict = {}
+                        for i in rain_interval:
+                            rain_interval_dict[(rain_interval.index(i) + 1)] = i
+                        if len(rain_interval_dict) > 1:
+                            print(f"We have {len(rain_interval_dict)} intervals when raining is expected:\n")
+                            for idx, key in enumerate(list(rain_interval_dict.items())):
+                                print(f"{key}")
+                        elif len(rain_interval_dict) == 1:
+                            print(f"We have {len(rain_interval_dict)} interval when raining is expected:\n")
+                            print(f"{key}")
+                        else:
+                            return
     except Exception as e:
-        print(f"\nWe can't find the forecast for the city: {city}\n")
+        print(f"\nWe can't find the forecast for the city: {city}\n(Exception: {e})")
 
 def rain_alert():
     global target_number, base_number
-    with smtplib.SMTP("smtp.gmail.com", 587) as connection:
-        connection.starttls()
-        connection.login(MY_EMAIL, MY_PASSWORD)
-        connection.sendmail(MY_EMAIL, MY_EMAIL, msg="Subject:Rain alert!\n\nIt's forecasted to rain !")
-    client = Client(account_sid, auth_token)
-    message = client.messages.create(body="Rain Alert - It's going to rain !", from_=base_number, to=target_number)
+    global rain_interval_dict
+    temp = target_number[0] + target_number[1] + target_number[2]
+    str_len = len(target_number)
+    for i in range(2, str_len - 3):
+        temp += "*"
+    temp += (target_number[-3] + target_number[-2] + target_number[-1])
+    print("Proceeding to Email/SMS Alert ...")
+    print(f"An SMS Alert has been sent to: {temp}")
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as connection:
+            connection.starttls()
+            connection.login(MY_EMAIL, MY_PASSWORD)
+            connection.sendmail(MY_EMAIL, MY_EMAIL, msg=f"Subject:Rain alert!\n\nIt's forecasted to rain !\n{rain_interval_dict}")
+        client = Client(account_sid, auth_token)
+        message = client.messages.create(body="Rain Alert - It's going to rain !", from_=base_number, to=target_number)
+    except Exception as e:
+        print("Exception: " + str(e))
+
 
 def update(): # Updates the db with the weather forecast data if available
     global rainAlert, fdate
@@ -115,6 +147,7 @@ def update(): # Updates the db with the weather forecast data if available
                             '{element["weather_windspeed"]}', '{element["weather_humidity"]}', '{round(element["weather_temp"],2)}');
                             """
                         cursor.execute(update_query)
+                        conn.commit()
                         n += 1
                     print(f"DB updated with {n} entries !")
     except Exception as e:
@@ -122,12 +155,11 @@ def update(): # Updates the db with the weather forecast data if available
 
 
 def main():
-    global rainAlert
+    global rainAlert, rain_interval_dict
     try:
         with psycopg2.connect(**connection_params) as conn:
             with conn.cursor() as cursor:
                 query = (f"""SELECT * FROM weatherTable WHERE date >= '{fdate}' ORDER BY date; """)
-                print(fdate)
                 cursor.execute(query)
                 data = cursor.fetchall()
                 fetched_data = pandas.DataFrame(data)
@@ -136,8 +168,8 @@ def main():
         print(e)
     end = False
     while not end:
-        choice = input("MENU: \nType '1' to see the forecast for Bucharest\nType '2' to see the forecast for any city\n"
-        "Type '3' to check the database entries\nType 'exit' to terminate the program\n")
+        choice = input("MENU:\nType '1' to see the forecast for Bucharest\nType '2' to see the forecast for any city\n"
+        "Type '3' to check the all the database entries\nType 'exit' to terminate the program\n")
         if choice == "1":
             interval = [row[1] for index, row in fetched_data.iterrows()]
             temp_interval = [row[6] for index, row in fetched_data.iterrows()]
@@ -146,12 +178,14 @@ def main():
             code_interval = [row[3] for index, row in fetched_data.iterrows()]
             first_interval = interval[0]
             last_interval = interval[-1]
+            rain_interval = []
             avg_h = sum(h_interval) / len(h_interval)
             avg_w = sum(w_interval) / len(w_interval)
             avg_temp = sum(temp_interval) / len(temp_interval)
-            for code in code_interval:
-                if code == "Rain":
+            for index, code in enumerate(code_interval):
+                if str(code) == "Rain":
                     rainAlert = True
+                    rain_interval.append(interval[index])
             today = f"{first_interval[8:10]}/{first_interval[5:7]}/{first_interval[:4]}"
             if len(interval) != 1:
                 print(f"Available forecast for today ({today}):\nThe available interval is between {first_interval[11:]} and {last_interval[11:]}.")
@@ -166,7 +200,12 @@ def main():
                 print(f"Average temperature in the forecasted period is: {round(avg_temp, 1)}°C ")
                 print(f"Average windspeed: {round(avg_w, 1)} km/h | Humidity: {round(avg_h, 2)}%")
                 if rainAlert:
-                    print(f"It's forecasted to rain !")
+                    print(f"""Rain alert: It's forecasted to rain!\n""")
+                    rain_interval_dict = {}
+                    for i in rain_interval:
+                        rain_interval_dict[(rain_interval.index(i) + 1)] = i
+                    rain_alert()
+                    print(f"We have {len(rain_interval_dict)} intervals where raining is expected:\n{rain_interval_dict}\n")
                 choice = input("Do you want to restart the program? Type 'yes' or 'no'\n").lower()
                 if choice == "no":
                     print("Terminating the program...")
