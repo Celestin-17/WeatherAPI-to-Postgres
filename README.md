@@ -1,6 +1,6 @@
  - WeatherAPI to Postgres DB -
 
-The update() function retrieves 12h forecast data from openweathermap, checks the postgres db existing data and updates with the proceeding forecast data.
+The update() function retrieves 12h forecast data from openweathermap, checks the postgres db existing data and updates with the proceeding forecast.
 The rain_alert() function is triggered when rain is forecasted and an Email/SMS alert is sent to the email and target number that've been set in the .env file
 
 The program has 3 options:
